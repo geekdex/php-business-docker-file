@@ -1,0 +1,66 @@
+name: Build and Deploy
+
+on:
+  push:
+    branches:
+      - main
+    paths:
+      - '**/Dockerfile'
+
+jobs:
+  detect-changes:
+    name: Detect Changed Dockerfiles
+    runs-on: ubuntu-latest
+    outputs:
+      matrix: ${{ steps.set-matrix.outputs.matrix }}
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Detect changed Dockerfiles
+        id: set-matrix
+        run: |
+          # Get changed files
+          CHANGED_FILES=$(git diff --name-only ${{ github.event.before }} ${{ github.sha }} | grep Dockerfile || true)
+          
+          if [ -z "$CHANGED_FILES" ]; then
+            # If no previous commit, build all Dockerfiles
+            CHANGED_FILES=$(find . -name "Dockerfile" -type f | grep -v ".git")
+          fi
+          
+          # Extract directory names and create matrix
+          DIRS=$(echo "$CHANGED_FILES" | xargs -I {} dirname {} | sort -u | jq -R -s -c 'split("\n")[:-1]')
+          echo "matrix={\"dockerfile_dir\":$DIRS}" >> $GITHUB_OUTPUT
+          echo "Changed directories: $DIRS"
+
+  build:
+    name: Build and Push Docker Image
+    needs: detect-changes
+    runs-on: ubuntu-latest
+    environment: my-env-secrets
+    strategy:
+      matrix: ${{ fromJson(needs.detect-changes.outputs.matrix) }}
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Log in to Aliyun Registry
+        uses: docker/login-action@v3
+        with:
+          registry: registry.cn-guangzhou.aliyuncs.com
+          username: ${{ secrets.DOCKERHUB_USERNAME }}
+          password: ${{ secrets.DOCKERHUB_PASSWORD }}
+
+      - name: Build and Push Docker Image
+        run: |
+          DIR="${{ matrix.dockerfile_dir }}"
+          TAG=$(basename "$DIR")
+          IMAGE="registry.cn-guangzhou.aliyuncs.com/geekpub/php:${TAG}"
+          
+          echo "Building image: $IMAGE"
+          echo "Dockerfile path: $DIR/Dockerfile"
+          
+          docker build -t "$IMAGE" -f "$DIR/Dockerfile" "$DIR"
+          docker push "$IMAGE"
