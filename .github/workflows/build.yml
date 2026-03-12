@@ -13,6 +13,7 @@ jobs:
     runs-on: ubuntu-latest
     outputs:
       matrix: ${{ steps.set-matrix.outputs.matrix }}
+      has-changes: ${{ steps.set-matrix.outputs.has-changes }}
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
@@ -26,18 +27,22 @@ jobs:
           CHANGED_FILES=$(git diff --name-only ${{ github.event.before }} ${{ github.sha }} | grep Dockerfile || true)
           
           if [ -z "$CHANGED_FILES" ]; then
-            # If no previous commit, build all Dockerfiles
-            CHANGED_FILES=$(find . -name "Dockerfile" -type f | grep -v ".git")
+            echo "has-changes=false" >> $GITHUB_OUTPUT
+            echo "matrix={\"dockerfile_dir\":[]}" >> $GITHUB_OUTPUT
+            echo "No Dockerfile changes detected"
+            exit 0
           fi
           
           # Extract directory names and create matrix
           DIRS=$(echo "$CHANGED_FILES" | xargs -I {} dirname {} | sort -u | jq -R -s -c 'split("\n")[:-1]')
+          echo "has-changes=true" >> $GITHUB_OUTPUT
           echo "matrix={\"dockerfile_dir\":$DIRS}" >> $GITHUB_OUTPUT
           echo "Changed directories: $DIRS"
 
   build:
     name: Build and Push Docker Image
     needs: detect-changes
+    if: needs.detect-changes.outputs.has-changes == 'true'
     runs-on: ubuntu-latest
     environment: my-env-secrets
     strategy:
